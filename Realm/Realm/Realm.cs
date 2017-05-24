@@ -439,8 +439,7 @@ namespace Realms
         {
             ThrowIfDisposed();
 
-            RealmObject.Metadata ignored;
-            return CreateObject(className, primaryKey, out ignored);
+            return CreateObject(className, primaryKey, out var _);
         }
 
         private RealmObject CreateObject(string className, object primaryKey, out RealmObject.Metadata metadata)
@@ -456,37 +455,7 @@ namespace Realms
             var pkProperty = metadata.Schema.PrimaryKeyProperty;
             if (pkProperty.HasValue)
             {
-                bool isNew;
-                switch (pkProperty.Value.Type)
-                {
-                    case PropertyType.String:
-                        if (primaryKey == null)
-                        {
-                            throw new ArgumentNullException(nameof(primaryKey), "Object identifiers cannot be null");
-                        }
-
-                        var stringKey = primaryKey as string;
-                        if (stringKey == null)
-                        {
-                            throw new ArgumentException($"{className}'s primary key is defined as string, but the value passed is {primaryKey.GetType().Name}");
-                        }
-
-                        objectPtr = SharedRealmHandle.CreateObject(metadata.Table, stringKey, update: false, isNew: out isNew);
-                        break;
-                    case PropertyType.Int:
-                        if (primaryKey == null)
-                        {
-                            objectPtr = SharedRealmHandle.CreateObject(metadata.Table, update: false, isNew: out isNew);
-                        }
-                        else
-                        {
-                            var longKey = Convert.ToInt64(primaryKey);
-                            objectPtr = SharedRealmHandle.CreateObject(metadata.Table, longKey, update: false, isNew: out isNew);
-                        }
-                        break;
-                    default:
-                        throw new NotSupportedException($"Unexpected primary key of type: {pkProperty.Value.Type}");
-                }
+                objectPtr = SharedRealmHandle.CreateObjectWithPrimaryKey(pkProperty.Value, primaryKey, metadata.Table, className, update: false, isNew: out var _);
             }
             else
             {
@@ -542,7 +511,7 @@ namespace Realms
 
             return CreateResultsHandle(resultsPtr);
         }
-        
+
         /// <summary>
         /// This <see cref="Realm"/> will start managing a <see cref="RealmObject"/> which has been created as a standalone object.
         /// </summary>
@@ -624,36 +593,18 @@ namespace Realms
                 throw new RealmObjectManagedByAnotherRealmException("Cannot start to manage an object with a realm when it's already managed by another realm");
             }
 
-            RealmObject.Metadata metadata;
-            if (!Metadata.TryGetValue(objectType.Name, out metadata))
+            if (!Metadata.TryGetValue(objectType.Name, out var metadata))
             {
                 throw new ArgumentException($"The class {objectType.Name} is not in the limited set of classes for this realm");
             }
 
             var objectPtr = IntPtr.Zero;
 
-            object pkValue;
             bool isNew;
-            if (metadata.Helper.TryGetPrimaryKeyValue(obj, out pkValue))
+            if (metadata.Helper.TryGetPrimaryKeyValue(obj, out var primaryKey))
             {
-                if (pkValue == null)
-                {
-                    if (metadata.Schema.PrimaryKeyProperty.Value.Type == PropertyType.String)
-                    {
-                        throw new ArgumentNullException(nameof(pkValue), "Object identifiers cannot be null");
-                    }
-
-                    objectPtr = SharedRealmHandle.CreateObject(metadata.Table, update, out isNew);
-                }
-                else if (pkValue is string)
-                {
-                    objectPtr = SharedRealmHandle.CreateObject(metadata.Table, (string)pkValue, update, out isNew);
-                }
-                else
-                {
-                    // We know it must be convertible to long, so optimistically do it.
-                    objectPtr = SharedRealmHandle.CreateObject(metadata.Table, Convert.ToInt64(pkValue), update, out isNew);
-                }
+                var pkProperty = metadata.Schema.PrimaryKeyProperty.Value;
+                objectPtr = SharedRealmHandle.CreateObjectWithPrimaryKey(pkProperty, primaryKey, metadata.Table, objectType.Name, update, out isNew);
             }
             else
             {
@@ -815,8 +766,7 @@ namespace Realms
             ThrowIfDisposed();
 
             var type = typeof(T);
-            RealmObject.Metadata metadata;
-            if (!Metadata.TryGetValue(type.Name, out metadata) || metadata.Schema.Type != type)
+            if (!Metadata.TryGetValue(type.Name, out var metadata) || metadata.Schema.Type != type)
             {
                 throw new ArgumentException($"The class {type.Name} is not in the limited set of classes for this realm");
             }
@@ -834,8 +784,7 @@ namespace Realms
         {
             ThrowIfDisposed();
 
-            RealmObject.Metadata metadata;
-            if (!Metadata.TryGetValue(className, out metadata))
+            if (!Metadata.TryGetValue(className, out var metadata))
             {
                 throw new ArgumentException($"The class {className} is not in the limited set of classes for this realm");
             }
@@ -1242,7 +1191,7 @@ namespace Realms
 
             public readonly GCHandle GCHandle;
             public readonly Queue<Action> AfterTransactionQueue = new Queue<Action>();
-            
+
             public RealmState()
             {
                 // this is freed in a native callback when the CSharpBindingContext is destroyed
@@ -1263,8 +1212,7 @@ namespace Realms
                 // is only called in the Realm ctor, but let's check just in case.
                 Debug.Assert(!weakRealms.Any(r =>
                 {
-                    Realm other;
-                    return r.TryGetTarget(out other) && ReferenceEquals(realm, other);
+                    return r.TryGetTarget(out var other) && ReferenceEquals(realm, other);
                 }), "Trying to add a duplicate Realm to the RealmState.");
 
                 weakRealms.Add(new WeakReference<Realm>(realm));
@@ -1274,8 +1222,7 @@ namespace Realms
             {
                 var weakRealm = weakRealms.SingleOrDefault(r =>
                 {
-                    Realm other;
-                    return r.TryGetTarget(out other) && ReferenceEquals(realm, other);
+                    return r.TryGetTarget(out var other) && ReferenceEquals(realm, other);
                 });
                 weakRealms.Remove(weakRealm);
 
@@ -1291,8 +1238,7 @@ namespace Realms
 
                 weakRealms.RemoveAll(r =>
                 {
-                    Realm realm;
-                    if (r.TryGetTarget(out realm))
+                    if (r.TryGetTarget(out var realm))
                     {
                         realms.Add(realm);
                         return false;
